@@ -6,7 +6,6 @@ import {
   type QuestionnaireData,
   type RecommendationTheme,
   type Tradeoff,
-  primaryGoalOptions,
   systemPrompt,
 } from "@/lib/questionnaire";
 
@@ -17,177 +16,249 @@ function toNumber(value: string) {
   return Number.isFinite(normalized) ? normalized : 0;
 }
 
-function inferLifeStage(data: QuestionnaireData) {
-  if (data.lifeStage) {
-    return {
-      label: data.lifeStage,
-      reasoning: "Based on the client-provided life stage.",
-    };
-  }
+function householdName(data: QuestionnaireData) {
+  const c1 = data.clients.client1.fullName || "Client 1";
+  const c2 = data.clients.client2.fullName || "Client 2";
+  return `${c1} & ${c2}`;
+}
 
-  const dependents = toNumber(data.dependentsCount);
-  if (dependents > 0) {
+function totalIncome(data: QuestionnaireData) {
+  return toNumber(data.clients.client1.annualEarnedIncome) + toNumber(data.clients.client2.annualEarnedIncome);
+}
+
+function totalLiquidAssets(data: QuestionnaireData) {
+  return data.assets.bankAccounts.reduce((sum, account) => sum + toNumber(account.averageBalance), 0);
+}
+
+function totalRetirementAssets(data: QuestionnaireData) {
+  return data.assets.retirementAccounts.reduce((sum, account) => sum + toNumber(account.value), 0);
+}
+
+function totalOtherInvestableAssets(data: QuestionnaireData) {
+  return data.assets.certificatesOfDeposit.reduce((sum, item) => sum + toNumber(item.value), 0)
+    + data.assets.otherAccounts.reduce((sum, item) => sum + toNumber(item.value), 0);
+}
+
+function totalDebtBalance(data: QuestionnaireData) {
+  return [
+    data.liabilities.client1.creditCardMonthlyPaymentBalance,
+    data.liabilities.client1.residenceLoanMonthlyPaymentBalance,
+    data.liabilities.client1.autoLoanMonthlyPaymentBalance,
+    data.liabilities.client1.otherDebtMonthlyPaymentBalance,
+    data.liabilities.client2.creditCardMonthlyPaymentBalance,
+    data.liabilities.client2.residenceLoanMonthlyPaymentBalance,
+    data.liabilities.client2.autoLoanMonthlyPaymentBalance,
+    data.liabilities.client2.otherDebtMonthlyPaymentBalance,
+  ].reduce((sum, item) => sum + toNumber(item), 0);
+}
+
+function dependentCount(data: QuestionnaireData) {
+  return data.dependents.filter((item) => item.name || item.relationship || item.dateOfBirth).length;
+}
+
+function inferLifeStage(data: QuestionnaireData) {
+  const deps = dependentCount(data);
+  const birthYears = [data.clients.client1.birthDate, data.clients.client2.birthDate]
+    .map((date) => Number(date.slice(0, 4)))
+    .filter((year) => Number.isFinite(year) && year > 1900);
+
+  if (deps > 0) {
     return {
       label: "Family-building",
-      reasoning: "Inferred from the presence of dependents.",
+      reasoning: "The intake shows one or more dependents and shared household planning needs.",
     };
   }
 
-  const retirementAssets = toNumber(data.retirementAssets);
-  if (retirementAssets > 300000) {
-    return {
-      label: "Peak earning / pre-retirement",
-      reasoning: "Inferred from retirement assets and planning context.",
-    };
+  if (birthYears.length) {
+    const avgAge = birthYears.reduce((sum, year) => sum + (new Date().getFullYear() - year), 0) / birthYears.length;
+    if (avgAge >= 55) {
+      return {
+        label: "Pre-retirement",
+        reasoning: "The reported birth dates suggest a later-career household.",
+      };
+    }
   }
 
   return {
     label: "Accumulation stage",
-    reasoning: "Defaulted because the questionnaire does not identify a clearer life stage.",
+    reasoning: "The intake does not show a clearer life stage, so this is treated as an accumulation household by default.",
   };
 }
 
+function explicitGoals(data: QuestionnaireData) {
+  const goals: string[] = [];
+  const text = `${data.adviceSought} ${data.currentAdvisors.attorney} ${data.currentAdvisors.accountant}`.toLowerCase();
+
+  if (/retire|retirement/.test(text)) goals.push("Retirement readiness");
+  if (/college|education|child/.test(text)) goals.push("Education funding");
+  if (/insurance|protect/.test(text)) goals.push("Protection planning");
+  if (/estate|will|trust/.test(text)) goals.push("Estate planning basics");
+  if (/debt|cash flow|cashflow/.test(text)) goals.push("Debt and cash-flow management");
+
+  return goals;
+}
+
 function buildPriorities(data: QuestionnaireData): GoalPriority[] {
-  const income = toNumber(data.annualIncome);
-  const expenses = toNumber(data.annualExpenses);
-  const emergencyMonths = toNumber(data.emergencyFundMonths);
-  const debt = toNumber(data.totalDebt);
+  const priorities: GoalPriority[] = [];
+  const income = totalIncome(data);
+  const debts = totalDebtBalance(data);
+  const liquid = totalLiquidAssets(data);
+  const deps = dependentCount(data);
+  const goals = explicitGoals(data);
 
-  const priorities = new Map<string, GoalPriority>();
+  if (deps > 0) {
+    priorities.push({
+      goal: "Protect household income",
+      priority: "high",
+      reason: "The intake shows dependents, making income protection and contingency planning foundational.",
+    });
+  }
 
-  for (const goal of data.primaryGoals) {
-    priorities.set(goal, {
+  const disabilityMissing = [data.insurance.client1, data.insurance.client2].some((profile) => !profile.disabilityCompany && /no|none/i.test(profile.disabilityCoverageCost || ""));
+  if (disabilityMissing) {
+    priorities.push({
+      goal: "Review disability coverage",
+      priority: "high",
+      reason: "The intake suggests at least one client lacks disability protection despite relying on earned income.",
+    });
+  }
+
+  if (income > 0 && debts / income > 1.5) {
+    priorities.push({
+      goal: "Reduce debt pressure",
+      priority: "high",
+      reason: "Debt balances appear large relative to annual earned income, which can crowd out other goals.",
+    });
+  }
+
+  if (liquid < income * 0.15) {
+    priorities.push({
+      goal: "Strengthen liquidity reserves",
+      priority: "high",
+      reason: "Reported liquid balances appear modest relative to income and family obligations.",
+    });
+  }
+
+  for (const goal of goals) {
+    priorities.push({
       goal,
       priority: "medium",
-      reason: "Selected directly by the household.",
+      reason: "This goal is explicitly or implicitly reflected in the client’s stated advice request.",
     });
   }
 
-  if (emergencyMonths > 0 && emergencyMonths < 6) {
-    priorities.set("Build emergency reserves", {
-      goal: "Build emergency reserves",
+  if ([data.estateIssues.client1, data.estateIssues.client2].some((item) => !item.currentWill || !item.medicalPowerOfAttorney || !item.generalPowerOfAttorney)) {
+    priorities.push({
+      goal: "Complete estate basics",
       priority: "high",
-      reason: "Reported emergency reserves appear below a typical 6-month safety buffer.",
+      reason: "The estate issues section indicates missing wills or powers of attorney.",
     });
   }
 
-  if (debt > 0 && income > 0 && debt / income > 1.5) {
-    priorities.set("Reduce debt", {
-      goal: "Reduce debt",
-      priority: "high",
-      reason: "Debt appears large relative to household income.",
-    });
+  const deduped = new Map<string, GoalPriority>();
+  for (const item of priorities) {
+    if (!deduped.has(item.goal)) deduped.set(item.goal, item);
   }
 
-  if (expenses > income * 0.8 && income > 0) {
-    priorities.set("Cash flow discipline", {
-      goal: "Cash flow discipline",
-      priority: "high",
-      reason: "Spending appears to consume a large share of annual income.",
-    });
-  }
-
-  return Array.from(priorities.values()).sort((a, b) => {
+  return Array.from(deduped.values()).sort((a, b) => {
     const rank = { high: 0, medium: 1, low: 2 };
     return rank[a.priority] - rank[b.priority];
   });
 }
 
 function buildTradeoffs(data: QuestionnaireData): Tradeoff[] {
-  const tradeoffs: Tradeoff[] = [];
-  const hasRetirement = data.primaryGoals.includes("Retire comfortably");
-  const hasEducation = data.primaryGoals.includes("Fund children's education");
-  const hasHome = data.primaryGoals.includes("Buy a home");
-  const hasProtection = data.primaryGoals.includes("Protect family income") || data.primaryGoals.includes("Optimize insurance coverage");
+  const items: Tradeoff[] = [];
+  const goals = explicitGoals(data);
+  const income = totalIncome(data);
+  const debt = totalDebtBalance(data);
+  const liquid = totalLiquidAssets(data);
 
-  if (hasRetirement && hasEducation) {
-    tradeoffs.push({
-      goal1: "Retire comfortably",
-      goal2: "Fund children's education",
-      detail: "These goals often compete for the same monthly surplus, so contribution pacing and priority order should be discussed.",
+  if (goals.includes("Retirement readiness") && goals.includes("Education funding")) {
+    items.push({
+      goal1: "Retirement readiness",
+      goal2: "Education funding",
+      detail: "The same future cash flow may need to support both retirement savings and dependent-related education goals.",
     });
   }
 
-  if (hasHome && hasRetirement) {
-    tradeoffs.push({
-      goal1: "Buy a home",
-      goal2: "Retire comfortably",
-      detail: "A larger down payment may reduce retirement contributions in the near term unless cash flow expands.",
+  if (debt > income) {
+    items.push({
+      goal1: "Debt reduction",
+      goal2: "Long-term accumulation",
+      detail: "High debt balances may limit the household’s ability to fund retirement, insurance, and education goals simultaneously.",
     });
   }
 
-  if (hasProtection && (hasEducation || hasRetirement)) {
-    tradeoffs.push({
-      goal1: "Protection planning",
-      goal2: "Long-term accumulation goals",
-      detail: "Insurance and protection costs may need to be balanced against retirement and education saving targets.",
+  if (liquid < income * 0.15) {
+    items.push({
+      goal1: "Liquidity reserves",
+      goal2: "Investment acceleration",
+      detail: "The household may need to prioritize emergency reserves before stretching toward more aggressive long-term funding targets.",
     });
   }
 
-  return tradeoffs;
+  return items;
 }
 
 function buildStrengths(data: QuestionnaireData): string[] {
   const strengths: string[] = [];
-  const income = toNumber(data.annualIncome);
-  const liquidAssets = toNumber(data.liquidAssets);
-  const retirementAssets = toNumber(data.retirementAssets);
+  const income = totalIncome(data);
+  const retirement = totalRetirementAssets(data);
+  const investable = totalOtherInvestableAssets(data);
+  const docs = Object.values(data.supportingDocuments).filter(Boolean).length;
 
-  if (income >= 150000) strengths.push("Household income suggests planning flexibility if priorities are staged carefully.");
-  if (liquidAssets >= 50000) strengths.push("Liquid assets provide an initial cushion for near-term planning decisions.");
-  if (retirementAssets >= 100000) strengths.push("The household has already accumulated a meaningful retirement base.");
-  if (data.planningScope.length >= 3) strengths.push("The household appears ready for a broad planning engagement rather than a narrow product discussion.");
+  if (income >= 200000) strengths.push("Combined earned income suggests the household may have planning flexibility once priorities are sequenced.");
+  if (retirement > 0) strengths.push("The intake shows existing retirement assets, which provides a base for longer-term planning.");
+  if (investable > 0) strengths.push("The household has investable assets outside retirement accounts that can inform liquidity and opportunity analysis.");
+  if (docs >= 4) strengths.push("The document checklist suggests the household can support a relatively efficient discovery and analysis process.");
+  if (data.currentAdvisors.accountant) strengths.push("An existing accountant relationship may help with coordinated implementation and tax-aware planning.");
 
-  return strengths.length ? strengths : ["The questionnaire provides enough detail to begin a structured discovery conversation."];
+  return strengths.length ? strengths : ["The intake includes enough baseline data to support a more substantive discovery conversation than a product-only fact find."];
 }
 
 function buildRisks(data: QuestionnaireData): string[] {
   const risks: string[] = [];
-  const emergencyMonths = toNumber(data.emergencyFundMonths);
-  const debt = toNumber(data.totalDebt);
-  const income = toNumber(data.annualIncome);
+  const estateMissing = [data.estateIssues.client1, data.estateIssues.client2].some((item) => !item.currentWill || !item.medicalPowerOfAttorney || !item.generalPowerOfAttorney);
+  const debt = totalDebtBalance(data);
+  const income = totalIncome(data);
+  const docsMissing = Object.entries(data.supportingDocuments).filter(([, present]) => !present).map(([key]) => key);
 
-  if (!emergencyMonths || emergencyMonths < 3) {
-    risks.push("Emergency reserves may be thin relative to potential income disruption or unexpected expenses.");
-  }
-  if (data.insuranceDisability === "No coverage" || data.insuranceDisability === "Not sure") {
-    risks.push("Disability protection should be reviewed because lost income can derail multiple goals at once.");
-  }
-  if (data.insuranceLife === "No coverage" || data.insuranceLife === "Not sure") {
-    risks.push("Life insurance adequacy is unclear, which matters if others depend on this household's income.");
-  }
-  if (!data.hasWill || !data.hasMedicalPOA || !data.hasGeneralPOA) {
-    risks.push("Estate basics appear incomplete, which can create avoidable legal and family friction.");
-  }
-  if (debt > 0 && income > 0 && debt / income > 2) {
-    risks.push("Debt load may reduce flexibility and increase vulnerability if cash flow tightens.");
-  }
+  const lifeGaps = [data.insurance.client1.lifeTypeCoverageCost, data.insurance.client2.lifeTypeCoverageCost].some((value) => !value || /none|no/i.test(value));
+  const disabilityGaps = [data.insurance.client1.disabilityCoverageCost, data.insurance.client2.disabilityCoverageCost].some((value) => !value || /none|no/i.test(value));
+  const umbrellaGaps = [data.insurance.client1.umbrellaLiabilityTypeCoverageCost, data.insurance.client2.umbrellaLiabilityTypeCoverageCost].some((value) => !value || /none|no/i.test(value));
 
-  return risks.length ? risks : ["No immediate red flags stand out from the limited questionnaire data."];
+  if (lifeGaps) risks.push("The insurance section suggests life coverage may be absent or incomplete for at least one client.");
+  if (disabilityGaps) risks.push("The insurance section suggests disability protection may be missing despite reliance on earned income.");
+  if (umbrellaGaps) risks.push("No clear umbrella liability coverage is shown, which may matter for a household with real estate, autos, and dependents.");
+  if (estateMissing) risks.push("Estate basics appear incomplete, increasing family and implementation risk if incapacity or death occurs.");
+  if (income > 0 && debt / income > 1.5) risks.push("Debt levels appear heavy relative to earned income, which may reduce flexibility across multiple goals.");
+  if (docsMissing.length >= 3) risks.push("Several supporting documents are not yet available, which may limit the quality of planning recommendations until collected.");
+
+  return risks.length ? risks : ["No single catastrophic gap is obvious from the intake alone, but the advisor should still validate each section with source documents."];
 }
 
 function buildDirections(): PlanningDirection[] {
   return [
     {
-      name: "Foundation-first planning",
-      summary: "Stabilize liquidity, core protection, and estate basics before stretching into additional long-term goals.",
+      name: "Foundation-first path",
+      summary: "Stabilize protection, estate basics, liquidity, and document completeness before making large strategic allocation changes.",
       advantages: [
-        "Reduces fragility if income or expenses change suddenly.",
-        "Creates a cleaner baseline for future investment and education planning.",
+        "Reduces fragility if income disruption, disability, or family emergencies occur.",
+        "Improves the reliability of later recommendations because the fact base is cleaner.",
       ],
       drawbacks: [
-        "May slow progress on aspirational goals in the near term.",
+        "May delay more aspirational goals such as accelerated investing or education pre-funding.",
       ],
     },
     {
-      name: "Parallel progress planning",
-      summary: "Advance retirement, protection, and family goals simultaneously using staged contribution targets.",
+      name: "Parallel progress path",
+      summary: "Address protection gaps while continuing retirement and other goal funding through staged contribution targets and debt decisions.",
       advantages: [
-        "Maintains momentum across several goals at once.",
-        "Can fit households with strong income and disciplined cash flow.",
+        "Maintains momentum across multiple client-valued objectives.",
+        "Fits households with stronger income capacity and willingness to monitor trade-offs closely.",
       ],
       drawbacks: [
-        "Requires clearer trade-off decisions and tighter monitoring.",
+        "Requires tighter cash-flow discipline and more explicit sequencing decisions.",
       ],
     },
   ];
@@ -196,27 +267,30 @@ function buildDirections(): PlanningDirection[] {
 function buildThemes(data: QuestionnaireData): RecommendationTheme[] {
   const themes: RecommendationTheme[] = [
     {
-      theme: "Clarify and sequence household goals",
+      theme: "Use the full household fact pattern before recommendations",
       urgency: "high",
-      whyItMatters: "The questionnaire suggests multiple simultaneous goals that likely compete for the same resources.",
+      whyItMatters: "This intake includes clients, dependents, assets, insurance, liabilities, estate issues, and advisor relationships; recommendations should integrate all of them together.",
     },
     {
-      theme: "Review core protection coverage",
-      urgency: data.insuranceLife === "Adequate coverage" && data.insuranceDisability === "Adequate coverage" ? "medium" : "high",
-      whyItMatters: "Insurance gaps can undermine every other part of the plan if a major event occurs.",
-    },
-    {
-      theme: "Build an implementation dashboard",
-      urgency: "medium",
-      whyItMatters: "A staged plan with milestones makes it easier to monitor trade-offs and adjust over time.",
+      theme: "Clarify priority order among competing goals",
+      urgency: "high",
+      whyItMatters: "The advice request and family structure imply simultaneous goals that likely compete for the same resources.",
     },
   ];
 
-  if (!data.hasWill || !data.hasMedicalPOA || !data.hasGeneralPOA) {
+  if ([data.estateIssues.client1, data.estateIssues.client2].some((item) => !item.currentWill)) {
     themes.push({
-      theme: "Address estate documents",
+      theme: "Address estate-document gaps early",
       urgency: "high",
-      whyItMatters: "Basic legal documents often become urgent once a household has dependents, assets, or shared obligations.",
+      whyItMatters: "Missing wills and powers of attorney can create immediate non-investment planning risk.",
+    });
+  }
+
+  if ([data.insurance.client1.disabilityCoverageCost, data.insurance.client2.disabilityCoverageCost].some((value) => !value || /none|no/i.test(value))) {
+    themes.push({
+      theme: "Pressure-test income protection assumptions",
+      urgency: "high",
+      whyItMatters: "The household depends on earned income, and at least one disability coverage field appears weak or absent.",
     });
   }
 
@@ -229,49 +303,45 @@ function buildMissingInfo(data: QuestionnaireData): MissingInfo[] {
     if (condition) missing.push({ item, whyNeeded });
   };
 
-  add(!data.adviceSought, "Primary advice sought", "The advisor needs a direct statement of what prompted the household to seek help now.");
-  add(!data.lifeStage, "Life stage", "Explicit life-stage context helps frame typical priorities and trade-offs.");
-  add(!data.annualIncome, "Annual income", "Cash flow capacity affects nearly every recommendation.");
-  add(!data.annualExpenses, "Annual expenses", "Spending data is needed to evaluate surplus, savings rate, and liquidity needs.");
-  add(!data.totalDebt, "Debt details", "Debt type and cost influence whether liquidity, refinancing, or faster payoff should come first.");
-  add(!data.notes, "Additional context", "Open-text context often reveals constraints and values not captured in checkbox fields.");
+  add(!data.clients.client1.fullName, "Client 1 full name", "The first client profile is incomplete.");
+  add(!data.clients.client2.fullName, "Client 2 full name", "The second client profile is incomplete.");
+  add(!data.clients.client1.annualEarnedIncome || !data.clients.client2.annualEarnedIncome, "Earned income for both clients", "A household-level analysis is weaker if one client’s income is missing.");
+  add(!data.assets.bankAccounts.some((item) => item.accountNumberType || item.averageBalance), "Bank account details", "Liquidity and cash reserve analysis depend on liquid account balances.");
+  add(!data.assets.retirementAccounts.some((item) => item.value), "Retirement account values", "Retirement readiness and opportunity-cost analysis depend on known account values.");
+  add(!data.liabilities.client1.residenceLoanMonthlyPaymentBalance && !data.liabilities.client2.residenceLoanMonthlyPaymentBalance, "Residence loan details", "Mortgage obligations influence liquidity, debt burden, and insurance needs.");
+  add(!data.adviceSought, "Comment on advice being sought", "The planner needs the clients’ own framing of what they want solved now.");
 
   return missing;
 }
 
 export function buildFallbackAnalysis(data: QuestionnaireData): AnalysisResult {
   const lifeCycleStage = inferLifeStage(data);
-  const priorities = buildPriorities(data);
-  const risks = buildRisks(data);
-  const strengths = buildStrengths(data);
-  const missingInformation = buildMissingInfo(data);
-
-  const summaryBits = [
-    data.householdName || "This household",
-    data.cityState ? `in ${data.cityState}` : "",
-    data.maritalStatus ? `${data.maritalStatus.toLowerCase()} household` : "household",
-    toNumber(data.dependentsCount) > 0 ? `with ${data.dependentsCount} dependents` : "",
-  ].filter(Boolean);
+  const household = householdName(data);
+  const income = totalIncome(data);
+  const liquid = totalLiquidAssets(data);
+  const retirement = totalRetirementAssets(data);
+  const debt = totalDebtBalance(data);
+  const dependents = dependentCount(data);
 
   return {
     source: "fallback",
     generatedAt: new Date().toISOString(),
-    householdSummary: `${summaryBits.join(" ")} is seeking help with ${data.planningScope.join(", ").toLowerCase() || "financial planning basics"}.`,
+    householdSummary: `${household} appears to be a ${lifeCycleStage.label.toLowerCase()} household with ${dependents} dependents, approximately $${income.toLocaleString()} of earned income, $${liquid.toLocaleString()} in reported liquid balances, $${retirement.toLocaleString()} in retirement assets, and debt balances that appear to total roughly $${debt.toLocaleString()}.`,
     lifeCycleStage,
-    priorities,
+    priorities: buildPriorities(data),
     tradeoffs: buildTradeoffs(data),
-    strengths,
-    risks,
+    strengths: buildStrengths(data),
+    risks: buildRisks(data),
     planningDirections: buildDirections(),
     recommendationThemes: buildThemes(data),
-    missingInformation,
+    missingInformation: buildMissingInfo(data),
     advisorQuestions: [
-      "Which goal would the household protect first if monthly surplus were tighter than expected?",
-      "How much risk to lifestyle would a 6–12 month income interruption create?",
-      "What existing employer benefits or outside policies are already in force?",
-      "Which goals are emotionally non-negotiable versus financially flexible?",
+      "Which household goals are truly non-negotiable versus flexible if cash flow tightens?",
+      "What existing policies, account statements, and loan documents should be reviewed first to validate the intake?",
+      "How do the clients want to sequence protection, debt reduction, retirement, and dependent-related goals?",
+      "Which current advisors should be part of implementation if recommendations move forward?",
     ],
-    clientSummary: "This preliminary analysis suggests the most value will come from clarifying goal order, pressure-testing protection gaps, and translating broad goals into a staged implementation plan.",
+    clientSummary: "This intake supports a real planning conversation, but the best next step is not a product pitch. It is a structured review of protection gaps, debt pressure, estate basics, and the order in which the household wants to pursue competing goals.",
     disclaimer: "Preliminary planning analysis only. This tool does not provide final legal, tax, investment, or insurance advice.",
   };
 }
@@ -283,6 +353,7 @@ function extractJson(text: string) {
 
 function stringifyValue(value: unknown) {
   if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
   if (value && typeof value === "object") return JSON.stringify(value);
   return "";
 }
@@ -305,36 +376,27 @@ function normalizeLifeCycleStage(value: unknown, fallback: ReturnType<typeof inf
 
 function normalizePriorities(value: unknown, fallback: GoalPriority[]) {
   if (!Array.isArray(value)) return fallback;
-
   const normalized = value
     .map((item) => {
-      if (typeof item === "string") {
-        return { goal: item, priority: "medium" as const, reason: "Generated by the AI analysis." };
-      }
-
+      if (typeof item === "string") return { goal: item, priority: "medium" as const, reason: "Generated by the AI analysis." };
       if (!item || typeof item !== "object") return null;
       const source = item as Record<string, unknown>;
       const rawPriority = String(source.priority ?? source.urgency ?? "medium").toLowerCase();
       const priority = rawPriority.includes("high") ? "high" : rawPriority.includes("low") ? "low" : "medium";
-      const goal = stringifyValue(source.goal || source.name);
+      const goal = stringifyValue(source.goal || source.name || source.title);
       const reason = stringifyValue(source.reason || source.rationale || source.notes);
       if (!goal) return null;
       return { goal, priority, reason: reason || "Generated by the AI analysis." };
     })
     .filter((item): item is GoalPriority => Boolean(item));
-
   return normalized.length ? normalized : fallback;
 }
 
 function normalizeTradeoffs(value: unknown, fallback: Tradeoff[]) {
   if (!Array.isArray(value)) return fallback;
-
   const normalized = value
     .map((item) => {
-      if (typeof item === "string") {
-        return { goal1: "Competing goals", goal2: "Cash flow constraints", detail: item };
-      }
-
+      if (typeof item === "string") return { goal1: "Competing priorities", goal2: "Shared resources", detail: item };
       if (!item || typeof item !== "object") return null;
       const source = item as Record<string, unknown>;
       const goal1 = stringifyValue(source.goal1 || source.goal_1 || source.firstGoal) || "Goal 1";
@@ -344,99 +406,74 @@ function normalizeTradeoffs(value: unknown, fallback: Tradeoff[]) {
       return { goal1, goal2, detail };
     })
     .filter((item): item is Tradeoff => Boolean(item));
-
   return normalized.length ? normalized : fallback;
 }
 
 function normalizePlanningDirections(value: unknown, fallback: PlanningDirection[]) {
   if (!Array.isArray(value)) return fallback;
-
   const normalized = value
     .map((item, index) => {
       if (typeof item === "string") {
         return {
           name: `Planning direction ${index + 1}`,
           summary: item,
-          advantages: ["Provides an AI-suggested path for advisor discussion."],
-          drawbacks: ["Needs advisor review before implementation."],
+          advantages: ["Requires advisor review."],
+          drawbacks: ["Trade-offs should be validated with the client."],
         };
       }
-
       if (!item || typeof item !== "object") return null;
       const source = item as Record<string, unknown>;
       const name = stringifyValue(source.name || source.option_name || source.title) || `Planning direction ${index + 1}`;
       const summary = stringifyValue(source.summary || source.description || source.notes);
-      const advantages = Array.isArray(source.advantages)
-        ? source.advantages.map((entry) => stringifyValue(entry)).filter(Boolean)
-        : Array.isArray(source.potential_advantages)
-          ? source.potential_advantages.map((entry) => stringifyValue(entry)).filter(Boolean)
-          : [];
-      const drawbacks = Array.isArray(source.drawbacks)
-        ? source.drawbacks.map((entry) => stringifyValue(entry)).filter(Boolean)
-        : Array.isArray(source.potential_drawbacks)
-          ? source.potential_drawbacks.map((entry) => stringifyValue(entry)).filter(Boolean)
-          : [];
+      const advantages = (Array.isArray(source.advantages) ? source.advantages : Array.isArray(source.potential_advantages) ? source.potential_advantages : [])
+        .map((entry) => stringifyValue(entry))
+        .filter(Boolean);
+      const drawbacks = (Array.isArray(source.drawbacks) ? source.drawbacks : Array.isArray(source.potential_drawbacks) ? source.potential_drawbacks : [])
+        .map((entry) => stringifyValue(entry))
+        .filter(Boolean);
       if (!summary) return null;
       return {
         name,
         summary,
-        advantages: advantages.length ? advantages : ["Potential benefits require advisor confirmation."],
-        drawbacks: drawbacks.length ? drawbacks : ["Trade-offs require advisor confirmation."],
+        advantages: advantages.length ? advantages : ["Requires advisor review."],
+        drawbacks: drawbacks.length ? drawbacks : ["Trade-offs should be validated with the client."],
       };
     })
     .filter((item): item is PlanningDirection => Boolean(item));
-
   return normalized.length ? normalized : fallback;
 }
 
 function normalizeRecommendationThemes(value: unknown, fallback: RecommendationTheme[]) {
   if (!Array.isArray(value)) return fallback;
-
   const normalized = value
     .map((item) => {
-      if (typeof item === "string") {
-        return {
-          theme: item,
-          urgency: "medium" as const,
-          whyItMatters: "Highlighted by the AI analysis for advisor review.",
-        };
-      }
-
+      if (typeof item === "string") return { theme: item, urgency: "medium" as const, whyItMatters: "Highlighted by the AI analysis." };
       if (!item || typeof item !== "object") return null;
       const source = item as Record<string, unknown>;
       const rawUrgency = String(source.urgency ?? source.priority ?? "medium").toLowerCase();
       const urgency = rawUrgency.includes("high") ? "high" : rawUrgency.includes("low") ? "low" : "medium";
       const theme = stringifyValue(source.theme || source.title || source.name);
-      const whyItMatters = stringifyValue(source.whyItMatters || source.why_it_matters || source.notes || source.reason);
+      const whyItMatters = stringifyValue(source.whyItMatters || source.why_it_matters || source.reason || source.notes);
       if (!theme) return null;
-      return { theme, urgency, whyItMatters: whyItMatters || "Highlighted by the AI analysis for advisor review." };
+      return { theme, urgency, whyItMatters: whyItMatters || "Highlighted by the AI analysis." };
     })
     .filter((item): item is RecommendationTheme => Boolean(item));
-
   return normalized.length ? normalized : fallback;
 }
 
 function normalizeMissingInformation(value: unknown, fallback: MissingInfo[]) {
   if (!Array.isArray(value)) return fallback;
-
   const normalized = value
     .map((item) => {
-      if (typeof item === "string") {
-        return { item, whyNeeded: "The AI indicated this is needed before stronger recommendations can be made." };
-      }
-
+      if (typeof item === "string") return { item, whyNeeded: "Needed before stronger recommendations can be made." };
       if (!item || typeof item !== "object") return null;
       const source = item as Record<string, unknown>;
-      const missingItem = stringifyValue(source.item || source.name || source.field);
+      const field = stringifyValue(source.item || source.name || source.field);
       const whyNeeded = stringifyValue(source.whyNeeded || source.why_needed || source.reason || source.notes);
-      if (!missingItem) return null;
-      return {
-        item: missingItem,
-        whyNeeded: whyNeeded || "Needed before stronger recommendations can be made.",
-      };
+      if (!field) return null;
+      return { item: field, whyNeeded: whyNeeded || "Needed before stronger recommendations can be made." };
     })
     .filter((item): item is MissingInfo => Boolean(item));
-
   return normalized.length ? normalized : fallback;
 }
 
@@ -460,7 +497,7 @@ export async function generateAnalysis(data: QuestionnaireData): Promise<Analysi
           { role: "system", content: systemPrompt },
           {
             role: "user",
-            content: `Analyze the following questionnaire data and return JSON with the keys: householdSummary, lifeCycleStage, priorities, tradeoffs, strengths, risks, planningDirections, recommendationThemes, missingInformation, advisorQuestions, clientSummary, disclaimer.\n\nQuestionnaire data:\n${JSON.stringify(data, null, 2)}`,
+            content: `Analyze this complete financial planning questionnaire. Use all fields provided across both clients, dependents, assets, insurance, liabilities, estate issues, advisors, documents, and the stated advice request. Return only JSON with the required keys.\n\nQuestionnaire:\n${JSON.stringify(data, null, 2)}`,
           },
         ],
       }),
@@ -494,8 +531,4 @@ export async function generateAnalysis(data: QuestionnaireData): Promise<Analysi
   } catch {
     return buildFallbackAnalysis(data);
   }
-}
-
-export function availableGoals() {
-  return [...primaryGoalOptions];
 }
