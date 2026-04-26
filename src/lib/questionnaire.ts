@@ -203,6 +203,14 @@ export const ownerOptions = [
   { value: "client2", label: "Client 2" },
 ] as const;
 
+export function hasClientProfileData(profile: ClientProfile): boolean {
+  return Object.values(profile).some((value) => value.trim().length > 0);
+}
+
+export function getVisibleClientKeys(questionnaire: QuestionnaireData): ClientKey[] {
+  return hasClientProfileData(questionnaire.clients.client2) ? ["client1", "client2"] : ["client1"];
+}
+
 export function createClientProfile(): ClientProfile {
   return {
     fullName: "",

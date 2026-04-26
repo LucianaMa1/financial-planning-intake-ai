@@ -5,11 +5,16 @@ import { useState } from "react";
 import {
   createBankAccount,
   createCertificateOfDeposit,
+  createClientProfile,
   createDependent,
+  createEstateProfile,
+  createInsuranceProfile,
+  createLiabilityProfile,
   createOtherAccount,
   createRetirementAccount,
   demoQuestionnaire,
   emptyAnalysis,
+  getVisibleClientKeys,
   initialQuestionnaire,
   ownerOptions,
   type AnalysisResult,
@@ -92,7 +97,17 @@ function TextArea({
   );
 }
 
-function OwnerSelect({ value, onChange, label = "Owner" }: { value: string; onChange: (value: ClientKey | "") => void; label?: string }) {
+function OwnerSelect({
+  value,
+  onChange,
+  label = "Owner",
+  options = ownerOptions,
+}: {
+  value: string;
+  onChange: (value: ClientKey | "") => void;
+  label?: string;
+  options?: ReadonlyArray<{ value: ClientKey | ""; label: string }>;
+}) {
   return (
     <label className="flex flex-col gap-2 text-sm font-medium text-slate-700">
       {label}
@@ -101,7 +116,7 @@ function OwnerSelect({ value, onChange, label = "Owner" }: { value: string; onCh
         onChange={(event) => onChange(event.target.value as ClientKey | "")}
         className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100"
       >
-        {ownerOptions.map((option) => (
+        {options.map((option) => (
           <option key={option.value || "none"} value={option.value}>
             {option.label}
           </option>
@@ -171,8 +186,45 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<AnalysisResult>(emptyAnalysis);
   const [status, setStatus] = useState<"idle" | "submitting" | "error">("idle");
   const [error, setError] = useState("");
+  const [showClient2, setShowClient2] = useState(getVisibleClientKeys(initialQuestionnaire).includes("client2"));
 
   const isAnalyzed = analysis.generatedAt !== emptyAnalysis.generatedAt;
+  const activeClientKeys: ClientKey[] = showClient2 ? ["client1", "client2"] : ["client1"];
+  const ownerSelectOptions = showClient2 ? ownerOptions : ownerOptions.filter((option) => option.value !== "client2");
+
+  const removeSecondClient = () => {
+    setForm((current) => ({
+      ...current,
+      clients: {
+        ...current.clients,
+        client2: createClientProfile(),
+      },
+      assets: {
+        ...current.assets,
+        bankAccounts: current.assets.bankAccounts.map((account) => ({ ...account, owner: account.owner === "client2" ? "" : account.owner })),
+        certificatesOfDeposit: current.assets.certificatesOfDeposit.map((account) => ({ ...account, owner: account.owner === "client2" ? "" : account.owner })),
+        primaryResidence: { ...current.assets.primaryResidence, owner: current.assets.primaryResidence.owner === "client2" ? "" : current.assets.primaryResidence.owner },
+        secondaryResidence: { ...current.assets.secondaryResidence, owner: current.assets.secondaryResidence.owner === "client2" ? "" : current.assets.secondaryResidence.owner },
+        automobile1: { ...current.assets.automobile1, owner: current.assets.automobile1.owner === "client2" ? "" : current.assets.automobile1.owner },
+        automobile2: { ...current.assets.automobile2, owner: current.assets.automobile2.owner === "client2" ? "" : current.assets.automobile2.owner },
+        retirementAccounts: current.assets.retirementAccounts.map((account) => ({ ...account, owner: account.owner === "client2" ? "" : account.owner })),
+        otherAccounts: current.assets.otherAccounts.map((account) => ({ ...account, owner: account.owner === "client2" ? "" : account.owner })),
+      },
+      insurance: {
+        ...current.insurance,
+        client2: createInsuranceProfile(),
+      },
+      liabilities: {
+        ...current.liabilities,
+        client2: createLiabilityProfile(),
+      },
+      estateIssues: {
+        ...current.estateIssues,
+        client2: createEstateProfile(),
+      },
+    }));
+    setShowClient2(false);
+  };
 
   const updateClient = <K extends keyof ClientProfile>(client: ClientKey, field: K, value: ClientProfile[K]) => {
     setForm((current) => ({
@@ -270,13 +322,21 @@ export default function Home() {
                 This version now mirrors the questionnaire you sent: Client 1, Client 2, dependents, assets, insurance, liabilities, estate issues, advisors, and supporting documents.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
-                <button type="button" onClick={() => setForm(demoQuestionnaire)} className="rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForm(demoQuestionnaire);
+                    setShowClient2(true);
+                  }}
+                  className="rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-100"
+                >
                   Load full demo case
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setForm(initialQuestionnaire);
+                    setShowClient2(false);
                     setAnalysis(emptyAnalysis);
                     setError("");
                     setStatus("idle");
@@ -289,9 +349,34 @@ export default function Home() {
             </div>
           </section>
 
-          <Section eyebrow="General information" title="Client 1 and Client 2" description="These fields directly mirror the General Information section in the sample questionnaire.">
+          <Section
+            eyebrow="General information"
+            title="Client details"
+            description="Start with one client, then add a second client only when this is a joint household or partner-based plan."
+          >
             <ClientGeneralSection title="Client 1" profile={form.clients.client1} onChange={(field, value) => updateClient("client1", field, value)} />
-            <ClientGeneralSection title="Client 2" profile={form.clients.client2} onChange={(field, value) => updateClient("client2", field, value)} />
+            {showClient2 ? (
+              <>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={removeSecondClient}
+                    className="rounded-full border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
+                  >
+                    Remove Client 2
+                  </button>
+                </div>
+                <ClientGeneralSection title="Client 2" profile={form.clients.client2} onChange={(field, value) => updateClient("client2", field, value)} />
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowClient2(true)}
+                className="rounded-full border border-sky-200 px-4 py-2 text-sm font-semibold text-sky-700 transition hover:bg-sky-50"
+              >
+                Add Client 2
+              </button>
+            )}
           </Section>
 
           <Section eyebrow="Family / dependent information" title="Dependents and family members" description="Matches the Family/Dependent Information section: Name, Relationship, Date of Birth, Dependent, Resides.">
@@ -318,7 +403,7 @@ export default function Home() {
               {form.assets.bankAccounts.map((account, index) => (
                 <ArrayCard key={`bank-${index}`} title={`Bank account ${index + 1}`} onRemove={form.assets.bankAccounts.length > 1 ? () => removeItem("bankAccounts", index) : undefined}>
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <OwnerSelect value={account.owner} onChange={(value) => updateArrayItem("bankAccounts", index, "owner", value)} />
+                    <OwnerSelect options={ownerSelectOptions} value={account.owner} onChange={(value) => updateArrayItem("bankAccounts", index, "owner", value)} />
                     <Field label="Bank account" value={account.institution} onChange={(value) => updateArrayItem("bankAccounts", index, "institution", value)} />
                     <Field label="Account number & type" value={account.accountNumberType} onChange={(value) => updateArrayItem("bankAccounts", index, "accountNumberType", value)} />
                     <Field label="Average balance" value={account.averageBalance} onChange={(value) => updateArrayItem("bankAccounts", index, "averageBalance", value)} type="number" />
@@ -330,7 +415,7 @@ export default function Home() {
               {form.assets.certificatesOfDeposit.map((item, index) => (
                 <ArrayCard key={`cd-${index}`} title={`CD ${index + 1}`} onRemove={form.assets.certificatesOfDeposit.length > 1 ? () => removeItem("certificatesOfDeposit", index) : undefined}>
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <OwnerSelect value={item.owner} onChange={(value) => updateArrayItem("certificatesOfDeposit", index, "owner", value)} />
+                    <OwnerSelect options={ownerSelectOptions} value={item.owner} onChange={(value) => updateArrayItem("certificatesOfDeposit", index, "owner", value)} />
                     <Field label="CD held at" value={item.heldAt} onChange={(value) => updateArrayItem("certificatesOfDeposit", index, "heldAt", value)} />
                     <Field label="Maturity" value={item.maturity} onChange={(value) => updateArrayItem("certificatesOfDeposit", index, "maturity", value)} />
                     <Field label="Value" value={item.value} onChange={(value) => updateArrayItem("certificatesOfDeposit", index, "value", value)} type="number" />
@@ -343,14 +428,14 @@ export default function Home() {
             <div className="grid gap-4 xl:grid-cols-2">
               <ArrayCard title="Primary residence">
                 <div className="grid gap-4 md:grid-cols-3">
-                  <OwnerSelect value={form.assets.primaryResidence.owner} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, primaryResidence: { ...current.assets.primaryResidence, owner: value } } }))} />
+                  <OwnerSelect options={ownerSelectOptions} value={form.assets.primaryResidence.owner} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, primaryResidence: { ...current.assets.primaryResidence, owner: value } } }))} />
                   <Field label="Primary residence" value={form.assets.primaryResidence.description} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, primaryResidence: { ...current.assets.primaryResidence, description: value } } }))} />
                   <Field label="Value" value={form.assets.primaryResidence.value} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, primaryResidence: { ...current.assets.primaryResidence, value } } }))} type="number" />
                 </div>
               </ArrayCard>
               <ArrayCard title="Secondary residence">
                 <div className="grid gap-4 md:grid-cols-3">
-                  <OwnerSelect value={form.assets.secondaryResidence.owner} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, secondaryResidence: { ...current.assets.secondaryResidence, owner: value } } }))} />
+                  <OwnerSelect options={ownerSelectOptions} value={form.assets.secondaryResidence.owner} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, secondaryResidence: { ...current.assets.secondaryResidence, owner: value } } }))} />
                   <Field label="Secondary residence" value={form.assets.secondaryResidence.description} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, secondaryResidence: { ...current.assets.secondaryResidence, description: value } } }))} />
                   <Field label="Value" value={form.assets.secondaryResidence.value} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, secondaryResidence: { ...current.assets.secondaryResidence, value } } }))} type="number" />
                 </div>
@@ -360,14 +445,14 @@ export default function Home() {
             <div className="grid gap-4 xl:grid-cols-2">
               <ArrayCard title="Automobile 1">
                 <div className="grid gap-4 md:grid-cols-3">
-                  <OwnerSelect value={form.assets.automobile1.owner} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, automobile1: { ...current.assets.automobile1, owner: value } } }))} />
+                  <OwnerSelect options={ownerSelectOptions} value={form.assets.automobile1.owner} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, automobile1: { ...current.assets.automobile1, owner: value } } }))} />
                   <Field label="Automobile 1" value={form.assets.automobile1.description} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, automobile1: { ...current.assets.automobile1, description: value } } }))} />
                   <Field label="Value" value={form.assets.automobile1.value} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, automobile1: { ...current.assets.automobile1, value } } }))} type="number" />
                 </div>
               </ArrayCard>
               <ArrayCard title="Automobile 2">
                 <div className="grid gap-4 md:grid-cols-3">
-                  <OwnerSelect value={form.assets.automobile2.owner} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, automobile2: { ...current.assets.automobile2, owner: value } } }))} />
+                  <OwnerSelect options={ownerSelectOptions} value={form.assets.automobile2.owner} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, automobile2: { ...current.assets.automobile2, owner: value } } }))} />
                   <Field label="Automobile 2" value={form.assets.automobile2.description} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, automobile2: { ...current.assets.automobile2, description: value } } }))} />
                   <Field label="Value" value={form.assets.automobile2.value} onChange={(value) => setForm((current) => ({ ...current, assets: { ...current.assets, automobile2: { ...current.assets.automobile2, value } } }))} type="number" />
                 </div>
@@ -378,7 +463,7 @@ export default function Home() {
               {form.assets.retirementAccounts.map((account, index) => (
                 <ArrayCard key={`ret-${index}`} title={`Retirement account ${index + 1}`} onRemove={form.assets.retirementAccounts.length > 1 ? () => removeItem("retirementAccounts", index) : undefined}>
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-                    <OwnerSelect value={account.owner} onChange={(value) => updateArrayItem("retirementAccounts", index, "owner", value)} />
+                    <OwnerSelect options={ownerSelectOptions} value={account.owner} onChange={(value) => updateArrayItem("retirementAccounts", index, "owner", value)} />
                     <Field label="Type / ownership" value={account.typeOwnership} onChange={(value) => updateArrayItem("retirementAccounts", index, "typeOwnership", value)} />
                     <Field label="Held by" value={account.heldBy} onChange={(value) => updateArrayItem("retirementAccounts", index, "heldBy", value)} />
                     <Field label="Account number" value={account.accountNumber} onChange={(value) => updateArrayItem("retirementAccounts", index, "accountNumber", value)} />
@@ -393,7 +478,7 @@ export default function Home() {
               {form.assets.otherAccounts.map((account, index) => (
                 <ArrayCard key={`other-${index}`} title={`Other account ${index + 1}`} onRemove={form.assets.otherAccounts.length > 1 ? () => removeItem("otherAccounts", index) : undefined}>
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    <OwnerSelect value={account.owner} onChange={(value) => updateArrayItem("otherAccounts", index, "owner", value)} />
+                    <OwnerSelect options={ownerSelectOptions} value={account.owner} onChange={(value) => updateArrayItem("otherAccounts", index, "owner", value)} />
                     <Field label="Account number & type" value={account.accountNumberType} onChange={(value) => updateArrayItem("otherAccounts", index, "accountNumberType", value)} />
                     <Field label="Value" value={account.value} onChange={(value) => updateArrayItem("otherAccounts", index, "value", value)} type="number" />
                   </div>
@@ -404,13 +489,13 @@ export default function Home() {
           </Section>
 
           <Section eyebrow="Insurance" title="Insurance profiles" description="Matches the second questionnaire page: Health, Disability, Life, Homeowners, Auto, Umbrella Liability, Professional Liability, and Long Term Care.">
-            {(["client1", "client2"] as ClientKey[]).map((clientKey) => {
+            {activeClientKeys.map((clientKey) => {
               const profile = form.insurance[clientKey];
               const title = clientKey === "client1" ? "Insurance – Client 1" : "Insurance – Client 2";
               return (
                 <ArrayCard key={clientKey} title={title}>
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    <OwnerSelect value={profile.owner} onChange={(value) => setForm((current) => ({ ...current, insurance: { ...current.insurance, [clientKey]: { ...current.insurance[clientKey], owner: value } } }))} label="Ownership: Client 1 or 2" />
+                    <OwnerSelect options={ownerSelectOptions} value={profile.owner} onChange={(value) => setForm((current) => ({ ...current, insurance: { ...current.insurance, [clientKey]: { ...current.insurance[clientKey], owner: value } } }))} label="Ownership" />
                     <Field label="Health / Company" value={profile.healthCompany} onChange={(value) => setForm((current) => ({ ...current, insurance: { ...current.insurance, [clientKey]: { ...current.insurance[clientKey], healthCompany: value } } }))} />
                     <Field label="Coverage / Cost" value={profile.healthCoverageCost} onChange={(value) => setForm((current) => ({ ...current, insurance: { ...current.insurance, [clientKey]: { ...current.insurance[clientKey], healthCoverageCost: value } } }))} />
                     <Field label="Disability / Company" value={profile.disabilityCompany} onChange={(value) => setForm((current) => ({ ...current, insurance: { ...current.insurance, [clientKey]: { ...current.insurance[clientKey], disabilityCompany: value } } }))} />
@@ -430,10 +515,10 @@ export default function Home() {
 
           <Section eyebrow="Liabilities and estate" title="Liabilities and estate issues" description="Matches the Liabilities and Estate Issues sections on page 2.">
             <div className="grid gap-4 xl:grid-cols-2">
-              {(["client1", "client2"] as ClientKey[]).map((clientKey) => (
+              {activeClientKeys.map((clientKey) => (
                 <ArrayCard key={`liability-${clientKey}`} title={`Liabilities – ${clientKey === "client1" ? "Client 1" : "Client 2"}`}>
                   <div className="grid gap-4 md:grid-cols-2">
-                    <OwnerSelect value={form.liabilities[clientKey].owner} onChange={(value) => setForm((current) => ({ ...current, liabilities: { ...current.liabilities, [clientKey]: { ...current.liabilities[clientKey], owner: value } } }))} label="Client 1 or 2" />
+                    <OwnerSelect options={ownerSelectOptions} value={form.liabilities[clientKey].owner} onChange={(value) => setForm((current) => ({ ...current, liabilities: { ...current.liabilities, [clientKey]: { ...current.liabilities[clientKey], owner: value } } }))} label="Ownership" />
                     <Field label="Credit Card – Monthly Pmt. / Balance" value={form.liabilities[clientKey].creditCardMonthlyPaymentBalance} onChange={(value) => setForm((current) => ({ ...current, liabilities: { ...current.liabilities, [clientKey]: { ...current.liabilities[clientKey], creditCardMonthlyPaymentBalance: value } } }))} />
                     <Field label="Residence Loan – Monthly Pmt. / Balance" value={form.liabilities[clientKey].residenceLoanMonthlyPaymentBalance} onChange={(value) => setForm((current) => ({ ...current, liabilities: { ...current.liabilities, [clientKey]: { ...current.liabilities[clientKey], residenceLoanMonthlyPaymentBalance: value } } }))} />
                     <Field label="Auto Loan – Monthly Pmt. / Balance" value={form.liabilities[clientKey].autoLoanMonthlyPaymentBalance} onChange={(value) => setForm((current) => ({ ...current, liabilities: { ...current.liabilities, [clientKey]: { ...current.liabilities[clientKey], autoLoanMonthlyPaymentBalance: value } } }))} />
@@ -444,10 +529,10 @@ export default function Home() {
             </div>
 
             <div className="grid gap-4 xl:grid-cols-2">
-              {(["client1", "client2"] as ClientKey[]).map((clientKey) => (
+              {activeClientKeys.map((clientKey) => (
                 <ArrayCard key={`estate-${clientKey}`} title={`Estate issues – ${clientKey === "client1" ? "Client 1" : "Client 2"}`}>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <OwnerSelect value={form.estateIssues[clientKey].owner} onChange={(value) => setForm((current) => ({ ...current, estateIssues: { ...current.estateIssues, [clientKey]: { ...current.estateIssues[clientKey], owner: value } } }))} label="Client 1 or 2" />
+                    <OwnerSelect options={ownerSelectOptions} value={form.estateIssues[clientKey].owner} onChange={(value) => setForm((current) => ({ ...current, estateIssues: { ...current.estateIssues, [clientKey]: { ...current.estateIssues[clientKey], owner: value } } }))} label="Ownership" />
                     <div />
                     <CheckboxCard label="Current Will" checked={form.estateIssues[clientKey].currentWill} onChange={(checked) => setForm((current) => ({ ...current, estateIssues: { ...current.estateIssues, [clientKey]: { ...current.estateIssues[clientKey], currentWill: checked } } }))} />
                     <CheckboxCard label="Living Will" checked={form.estateIssues[clientKey].livingWill} onChange={(checked) => setForm((current) => ({ ...current, estateIssues: { ...current.estateIssues, [clientKey]: { ...current.estateIssues[clientKey], livingWill: checked } } }))} />
