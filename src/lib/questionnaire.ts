@@ -14,7 +14,6 @@ export type ClientProfile = {
   annualEarnedIncome: string;
   fax: string;
   email: string;
-  socialSecurityMasked: string;
   birthDate: string;
   priorMarriages: string;
 };
@@ -23,7 +22,6 @@ export type DependentInfo = {
   name: string;
   relationship: string;
   dateOfBirth: string;
-  socialSecurityMasked: string;
   dependent: string;
   resides: string;
 };
@@ -218,7 +216,6 @@ export function createClientProfile(): ClientProfile {
     annualEarnedIncome: "",
     fax: "",
     email: "",
-    socialSecurityMasked: "",
     birthDate: "",
     priorMarriages: "",
   };
@@ -229,7 +226,6 @@ export function createDependent(): DependentInfo {
     name: "",
     relationship: "",
     dateOfBirth: "",
-    socialSecurityMasked: "",
     dependent: "",
     resides: "",
   };
@@ -384,7 +380,6 @@ export const demoQuestionnaire: QuestionnaireData = {
       annualEarnedIncome: "185000",
       fax: "",
       email: "wendy@example.com",
-      socialSecurityMasked: "***-**-1234",
       birthDate: "1988-04-12",
       priorMarriages: "No",
     },
@@ -400,7 +395,6 @@ export const demoQuestionnaire: QuestionnaireData = {
       annualEarnedIncome: "100000",
       fax: "",
       email: "david@example.com",
-      socialSecurityMasked: "***-**-5678",
       birthDate: "1987-11-03",
       priorMarriages: "No",
     },
@@ -410,7 +404,6 @@ export const demoQuestionnaire: QuestionnaireData = {
       name: "Emma Chen",
       relationship: "Daughter",
       dateOfBirth: "2018-06-10",
-      socialSecurityMasked: "***-**-1111",
       dependent: "Yes",
       resides: "Home",
     },
@@ -418,7 +411,6 @@ export const demoQuestionnaire: QuestionnaireData = {
       name: "Lucas Chen",
       relationship: "Son",
       dateOfBirth: "2021-02-05",
-      socialSecurityMasked: "***-**-2222",
       dependent: "Yes",
       resides: "Home",
     },

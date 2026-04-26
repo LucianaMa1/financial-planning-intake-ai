@@ -159,7 +159,6 @@ function ClientGeneralSection({
         <Field label="Annual earned income" value={profile.annualEarnedIncome} onChange={(value) => onChange("annualEarnedIncome", value)} type="number" />
         <Field label="Fax" value={profile.fax} onChange={(value) => onChange("fax", value)} />
         <Field label="Email" value={profile.email} onChange={(value) => onChange("email", value)} type="email" />
-        <Field label="Social Security # (masked)" value={profile.socialSecurityMasked} onChange={(value) => onChange("socialSecurityMasked", value)} placeholder="***-**-1234" />
         <Field label="Birth date" value={profile.birthDate} onChange={(value) => onChange("birthDate", value)} type="date" />
         <Field label="Prior marriage(s)" value={profile.priorMarriages} onChange={(value) => onChange("priorMarriages", value)} placeholder="Yes / No / Details" />
       </div>
@@ -295,7 +294,7 @@ export default function Home() {
             <ClientGeneralSection title="Client 2" profile={form.clients.client2} onChange={(field, value) => updateClient("client2", field, value)} />
           </Section>
 
-          <Section eyebrow="Family / dependent information" title="Dependents and family members" description="Matches the Family/Dependent Information section: Name, Relationship, Date of Birth, Social Security #, Dependent, Resides.">
+          <Section eyebrow="Family / dependent information" title="Dependents and family members" description="Matches the Family/Dependent Information section: Name, Relationship, Date of Birth, Dependent, Resides.">
             <div className="space-y-4">
               {form.dependents.map((dependent, index) => (
                 <ArrayCard key={`dependent-${index}`} title={`Dependent ${index + 1}`} onRemove={form.dependents.length > 1 ? () => removeItem("dependents", index) : undefined}>
@@ -303,7 +302,6 @@ export default function Home() {
                     <Field label="Name" value={dependent.name} onChange={(value) => updateArrayItem("dependents", index, "name", value)} />
                     <Field label="Relationship" value={dependent.relationship} onChange={(value) => updateArrayItem("dependents", index, "relationship", value)} />
                     <Field label="Date of Birth" value={dependent.dateOfBirth} onChange={(value) => updateArrayItem("dependents", index, "dateOfBirth", value)} type="date" />
-                    <Field label="Social Security # (masked)" value={dependent.socialSecurityMasked} onChange={(value) => updateArrayItem("dependents", index, "socialSecurityMasked", value)} placeholder="***-**-0000" />
                     <Field label="Dependent" value={dependent.dependent} onChange={(value) => updateArrayItem("dependents", index, "dependent", value)} placeholder="Yes / No" />
                     <Field label="Resides" value={dependent.resides} onChange={(value) => updateArrayItem("dependents", index, "resides", value)} placeholder="Home / College / Elsewhere" />
                   </div>
