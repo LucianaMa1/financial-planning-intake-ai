@@ -1,6 +1,6 @@
 # Financial Planning Intake AI
 
-A GitHub-ready MVP for a CFP-style financial planning tool.
+A GitHub-ready MVP for a CFP-style financial planning tool, deployed on Cloudflare.
 
 ## What it does
 
@@ -8,13 +8,15 @@ A GitHub-ready MVP for a CFP-style financial planning tool.
 - Captures planning scope, priority goals, liquidity, debt, insurance, and estate basics
 - Sends the questionnaire to an API route for AI analysis
 - Returns a structured preliminary planning brief for advisor review
-- Falls back to a local rules-based analysis when `OPENAI_API_KEY` is not configured, so the demo still works
+- Falls back to a local rules-based analysis when `OPENAI_API_KEY` is not configured, so the app still works without an AI secret
 
 ## Stack
 
 - Next.js 16 App Router
 - React 19
 - Tailwind CSS 4
+- OpenNext for Cloudflare
+- Cloudflare Workers + Wrangler
 - Route Handler API at `src/app/api/analyze/route.ts`
 
 ## Local development
@@ -27,24 +29,46 @@ npm run dev
 
 Then open `http://localhost:3000`.
 
+## Cloudflare local preview
+
+```bash
+npm install
+npm run preview
+```
+
+This builds the app with OpenNext and runs it through Wrangler locally.
+
 ## Environment variables
+
+For local Next.js development:
 
 ```bash
 OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
+For Cloudflare production, set secrets with Wrangler:
+
+```bash
+wrangler secret put OPENAI_API_KEY
+wrangler secret put OPENAI_MODEL
+```
+
 If no API key is present, the app uses a deterministic fallback analysis engine.
 
 ## Deployment
 
-### Vercel
-- Import the repo into Vercel
-- Set `OPENAI_API_KEY` and optional `OPENAI_MODEL`
-- Deploy
+### Deploy to Cloudflare
 
-### GitHub
-This repo is ready to push to GitHub directly. If you want to host it, pair the GitHub repo with Vercel for server-side AI calls.
+```bash
+npm run deploy
+```
+
+The Wrangler config is preconfigured to publish the Worker and attach the custom domain:
+
+- `financialplanning.luciana.digital`
+
+Worker config lives in `wrangler.jsonc`.
 
 ## Product notes
 
